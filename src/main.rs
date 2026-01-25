@@ -14,6 +14,7 @@ use syn::{
 };
 use walkdir::WalkDir;
 
+/// CLI usage help text.
 const USAGE: &str = "\
 rustdoc-checker - Check Rust files for missing/lazy documentation
 
@@ -32,6 +33,7 @@ OPTIONS:
     -h, --help           Print help
 ";
 
+/// Parsed command-line arguments.
 struct Args {
     path: PathBuf,
     mode: CheckMode,
@@ -42,6 +44,15 @@ struct Args {
 }
 
 impl Args {
+    /// Parses command-line arguments from `env::args()`.
+    ///
+    /// # Returns
+    ///
+    /// The parsed arguments.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if arguments are invalid or missing.
     fn parse() -> Result<Self> {
         let mut args = env::args().skip(1).peekable();
 
@@ -102,13 +113,18 @@ impl Args {
     }
 }
 
+/// What kind of documentation issues to check for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CheckMode {
+    /// Only check for missing documentation.
     Docs,
+    /// Only check for lazy/incomplete documentation.
     Lazy,
+    /// Check for both missing and lazy documentation.
     Both,
 }
 
+/// A documentation issue found during checking.
 #[derive(Debug, Clone)]
 struct Issue {
     name: String,
@@ -117,17 +133,29 @@ struct Issue {
     detail: String,
 }
 
+/// Categories of documentation issues.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum IssueType {
+    /// Item has no documentation at all.
     MissingDoc,
+    /// Function docs lack `# Arguments` section.
     MissingArguments,
+    /// Function docs lack `# Returns` section.
     MissingReturns,
+    /// Function docs lack `# Errors` section.
     MissingErrors,
+    /// Function docs lack `# Panics` section.
     MissingPanics,
+    /// Unsafe function docs lack `# Safety` section.
     MissingSafety,
 }
 
 impl IssueType {
+    /// Returns the short string identifier for this issue type.
+    ///
+    /// # Returns
+    ///
+    /// A static string like `"missing_doc"` or `"missing_args"`.
     fn as_str(&self) -> &'static str {
         match self {
             IssueType::MissingDoc => "missing_doc",
@@ -140,6 +168,7 @@ impl IssueType {
     }
 }
 
+/// Results from checking a single file.
 #[derive(Debug, Default)]
 struct FileResult {
     filepath: PathBuf,
@@ -157,6 +186,11 @@ struct DocSections {
 }
 
 impl DocSections {
+    /// Parses a doc comment string to detect which sections are present.
+    ///
+    /// # Returns
+    ///
+    /// A `DocSections` with flags set for detected sections.
     fn parse(doc: &str) -> Self {
         let lower = doc.to_lowercase();
         Self {
@@ -179,12 +213,18 @@ struct PanicDetector {
 }
 
 impl PanicDetector {
+    /// Creates a new panic detector with no panics found yet.
+    ///
+    /// # Returns
+    ///
+    /// A fresh `PanicDetector` instance.
     fn new() -> Self {
         Self { found_panic: false }
     }
 }
 
 impl<'ast> Visit<'ast> for PanicDetector {
+    /// Checks macros for panic-prone invocations like `panic!`, `assert!`, etc.
     fn visit_macro(&mut self, node: &'ast syn::Macro) {
         if let Some(ident) = node.path.get_ident() {
             let name = ident.to_string();
@@ -207,6 +247,7 @@ impl<'ast> Visit<'ast> for PanicDetector {
         syn::visit::visit_macro(self, node);
     }
 
+    /// Checks method calls for `unwrap()` and `expect()`.
     fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
         let method = node.method.to_string();
         if matches!(method.as_str(), "unwrap" | "expect") {
@@ -215,14 +256,14 @@ impl<'ast> Visit<'ast> for PanicDetector {
         syn::visit::visit_expr_method_call(self, node);
     }
 
+    /// Flags array/slice indexing which can panic on out-of-bounds.
     fn visit_expr_index(&mut self, node: &'ast syn::ExprIndex) {
-        // Array/slice indexing can panic on out-of-bounds
         self.found_panic = true;
         syn::visit::visit_expr_index(self, node);
     }
 
+    /// Flags division and modulo which can panic on zero divisor.
     fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
-        // Integer division and modulo can panic on division by zero
         if matches!(node.op, syn::BinOp::Div(_) | syn::BinOp::Rem(_)) {
             self.found_panic = true;
         }
@@ -230,14 +271,22 @@ impl<'ast> Visit<'ast> for PanicDetector {
     }
 }
 
-/// Check if a function body contains panic-prone patterns.
+/// Checks if a function body contains panic-prone patterns.
+///
+/// # Returns
+///
+/// `true` if any panic-prone patterns are detected.
 fn can_panic(body: &Block) -> bool {
     let mut detector = PanicDetector::new();
     detector.visit_block(body);
     detector.found_panic
 }
 
-/// Extract doc comment from attributes.
+/// Extracts the doc comment string from a list of attributes.
+///
+/// # Returns
+///
+/// The combined doc comment text, or `None` if no doc comments exist.
 fn extract_doc(attrs: &[Attribute]) -> Option<String> {
     let docs: Vec<String> = attrs
         .iter()
@@ -264,7 +313,16 @@ fn extract_doc(attrs: &[Attribute]) -> Option<String> {
     }
 }
 
-/// Check if visibility is public (or we're checking private items).
+/// Checks if an item should be checked based on its visibility.
+///
+/// # Arguments
+///
+/// * `vis` - The visibility of the item.
+/// * `check_private` - Whether to check private items.
+///
+/// # Returns
+///
+/// `true` if the item should be checked.
 fn is_checkable(vis: &Visibility, check_private: bool) -> bool {
     if check_private {
         return true;
@@ -272,7 +330,11 @@ fn is_checkable(vis: &Visibility, check_private: bool) -> bool {
     matches!(vis, Visibility::Public(_))
 }
 
-/// Count real parameters (excluding self).
+/// Counts real parameters (excluding `self`).
+///
+/// # Returns
+///
+/// The number of non-self parameters.
 fn count_params(sig: &Signature) -> usize {
     sig.inputs
         .iter()
@@ -280,7 +342,11 @@ fn count_params(sig: &Signature) -> usize {
         .count()
 }
 
-/// Get parameter names for reporting.
+/// Gets parameter names for issue reporting.
+///
+/// # Returns
+///
+/// A list of parameter names.
 fn get_param_names(sig: &Signature) -> Vec<String> {
     sig.inputs
         .iter()
@@ -295,12 +361,20 @@ fn get_param_names(sig: &Signature) -> Vec<String> {
         .collect()
 }
 
-/// Check if function returns something (not unit).
+/// Checks if function returns something other than unit.
+///
+/// # Returns
+///
+/// `true` if the function has an explicit return type.
 fn has_return_value(sig: &Signature) -> bool {
     !matches!(sig.output, ReturnType::Default)
 }
 
-/// Check if function returns Result.
+/// Checks if function returns a `Result` type.
+///
+/// # Returns
+///
+/// `true` if the return type is `Result`.
 fn returns_result(sig: &Signature) -> bool {
     if let ReturnType::Type(_, ty) = &sig.output {
         return type_is_result(ty);
@@ -308,7 +382,11 @@ fn returns_result(sig: &Signature) -> bool {
     false
 }
 
-/// Recursively check if a type is Result.
+/// Recursively checks if a type is `Result`.
+///
+/// # Returns
+///
+/// `true` if the type is or contains `Result`.
 fn type_is_result(ty: &Type) -> bool {
     match ty {
         Type::Path(type_path) => {
@@ -324,11 +402,16 @@ fn type_is_result(ty: &Type) -> bool {
     }
 }
 
-/// Check if function is unsafe.
+/// Checks if function is `unsafe`.
+///
+/// # Returns
+///
+/// `true` if the function is marked `unsafe`.
 fn is_unsafe(sig: &Signature) -> bool {
     sig.unsafety.is_some()
 }
 
+/// AST visitor that checks documentation on Rust items.
 struct DocChecker {
     mode: CheckMode,
     check_private: bool,
@@ -337,6 +420,16 @@ struct DocChecker {
 }
 
 impl DocChecker {
+    /// Creates a new doc checker with the specified mode and visibility settings.
+    ///
+    /// # Arguments
+    ///
+    /// * `mode` - What kind of issues to check for.
+    /// * `check_private` - Whether to check private items.
+    ///
+    /// # Returns
+    ///
+    /// A new `DocChecker` instance.
     fn new(mode: CheckMode, check_private: bool) -> Self {
         Self {
             mode,
@@ -346,6 +439,11 @@ impl DocChecker {
         }
     }
 
+    /// Builds a qualified name using the current context stack.
+    ///
+    /// # Returns
+    ///
+    /// The fully qualified name (e.g., `"Foo::bar::method"`).
     fn qualified_name(&self, name: &str) -> String {
         if self.context_stack.is_empty() {
             name.to_string()
@@ -354,14 +452,32 @@ impl DocChecker {
         }
     }
 
+    /// Checks if we should look for missing documentation.
+    ///
+    /// # Returns
+    ///
+    /// `true` if mode is `Docs` or `Both`.
     fn should_check_missing(&self) -> bool {
         matches!(self.mode, CheckMode::Docs | CheckMode::Both)
     }
 
+    /// Checks if we should look for lazy documentation.
+    ///
+    /// # Returns
+    ///
+    /// `true` if mode is `Lazy` or `Both`.
     fn should_check_lazy(&self) -> bool {
         matches!(self.mode, CheckMode::Lazy | CheckMode::Both)
     }
 
+    /// Records an issue found during checking.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The qualified name of the item with the issue.
+    /// * `line` - The line number where the issue was found.
+    /// * `issue_type` - The category of issue.
+    /// * `detail` - A human-readable description of the issue.
     fn add_issue(&mut self, name: String, line: usize, issue_type: IssueType, detail: String) {
         self.issues.push(Issue {
             name,
@@ -371,6 +487,14 @@ impl DocChecker {
         });
     }
 
+    /// Checks a function for documentation issues.
+    ///
+    /// # Arguments
+    ///
+    /// * `sig` - The function signature.
+    /// * `attrs` - The function's attributes (including doc comments).
+    /// * `vis` - The visibility, or `None` for trait methods.
+    /// * `body` - The function body for panic detection, if available.
     fn check_function(
         &mut self,
         sig: &Signature,
@@ -467,6 +591,15 @@ impl DocChecker {
         }
     }
 
+    /// Checks a non-function item for missing documentation.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The item's identifier.
+    /// * `attrs` - The item's attributes.
+    /// * `vis` - The item's visibility.
+    /// * `line` - The line number of the item.
+    /// * `kind` - A description of the item type (e.g., "struct", "enum").
     fn check_item_doc(
         &mut self,
         name: &str,
@@ -492,11 +625,13 @@ impl DocChecker {
 }
 
 impl<'ast> Visit<'ast> for DocChecker {
+    /// Visits a free function and checks its documentation.
     fn visit_item_fn(&mut self, node: &'ast ItemFn) {
         self.check_function(&node.sig, &node.attrs, Some(&node.vis), Some(&node.block));
         syn::visit::visit_item_fn(self, node);
     }
 
+    /// Visits a struct and checks its documentation.
     fn visit_item_struct(&mut self, node: &'ast ItemStruct) {
         let line = node.ident.span().start().line;
         self.check_item_doc(
@@ -512,6 +647,7 @@ impl<'ast> Visit<'ast> for DocChecker {
         self.context_stack.pop();
     }
 
+    /// Visits an enum and checks its documentation.
     fn visit_item_enum(&mut self, node: &'ast ItemEnum) {
         let line = node.ident.span().start().line;
         self.check_item_doc(
@@ -527,6 +663,7 @@ impl<'ast> Visit<'ast> for DocChecker {
         self.context_stack.pop();
     }
 
+    /// Visits a trait and checks its documentation.
     fn visit_item_trait(&mut self, node: &'ast ItemTrait) {
         let line = node.ident.span().start().line;
         self.check_item_doc(
@@ -542,6 +679,7 @@ impl<'ast> Visit<'ast> for DocChecker {
         self.context_stack.pop();
     }
 
+    /// Visits a trait item (method) and checks its documentation.
     fn visit_trait_item(&mut self, node: &'ast TraitItem) {
         if let TraitItem::Fn(method) = node {
             // Trait methods are implicitly public if trait is public
@@ -551,6 +689,7 @@ impl<'ast> Visit<'ast> for DocChecker {
         syn::visit::visit_trait_item(self, node);
     }
 
+    /// Visits an impl block and sets up context for nested items.
     fn visit_item_impl(&mut self, node: &'ast ItemImpl) {
         // Get impl target name for context
         let impl_name = if let Some((_, path, _)) = &node.trait_ {
@@ -579,11 +718,13 @@ impl<'ast> Visit<'ast> for DocChecker {
         self.context_stack.pop();
     }
 
+    /// Visits an impl method and checks its documentation.
     fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
         self.check_function(&node.sig, &node.attrs, Some(&node.vis), Some(&node.block));
         syn::visit::visit_impl_item_fn(self, node);
     }
 
+    /// Visits a module and checks its documentation.
     fn visit_item_mod(&mut self, node: &'ast ItemMod) {
         let line = node.ident.span().start().line;
         self.check_item_doc(
@@ -599,6 +740,7 @@ impl<'ast> Visit<'ast> for DocChecker {
         self.context_stack.pop();
     }
 
+    /// Visits a type alias and checks its documentation.
     fn visit_item_type(&mut self, node: &'ast ItemType) {
         let line = node.ident.span().start().line;
         self.check_item_doc(
@@ -611,6 +753,7 @@ impl<'ast> Visit<'ast> for DocChecker {
         syn::visit::visit_item_type(self, node);
     }
 
+    /// Visits a const and checks its documentation.
     fn visit_item_const(&mut self, node: &'ast ItemConst) {
         let line = node.ident.span().start().line;
         self.check_item_doc(
@@ -623,6 +766,7 @@ impl<'ast> Visit<'ast> for DocChecker {
         syn::visit::visit_item_const(self, node);
     }
 
+    /// Visits a static and checks its documentation.
     fn visit_item_static(&mut self, node: &'ast ItemStatic) {
         let line = node.ident.span().start().line;
         self.check_item_doc(
@@ -636,6 +780,21 @@ impl<'ast> Visit<'ast> for DocChecker {
     }
 }
 
+/// Parses and checks a single Rust file for documentation issues.
+///
+/// # Arguments
+///
+/// * `path` - Path to the Rust file.
+/// * `mode` - What kind of issues to check for.
+/// * `check_private` - Whether to check private items.
+///
+/// # Returns
+///
+/// A `FileResult` containing any issues found.
+///
+/// # Errors
+///
+/// Returns an error if the file cannot be read.
 fn check_file(path: &Path, mode: CheckMode, check_private: bool) -> Result<FileResult> {
     let content =
         fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
@@ -680,6 +839,16 @@ fn check_file(path: &Path, mode: CheckMode, check_private: bool) -> Result<FileR
     Ok(result)
 }
 
+/// Recursively finds all `.rs` files under a directory, respecting exclusions.
+///
+/// # Arguments
+///
+/// * `root` - The root path (file or directory) to search.
+/// * `exclude` - Directory names to skip.
+///
+/// # Returns
+///
+/// A list of paths to Rust source files.
 fn find_rust_files(root: &Path, exclude: &[String]) -> Vec<PathBuf> {
     let skip_dirs: std::collections::HashSet<&str> = ["target", ".git", "node_modules", ".cargo"]
         .into_iter()
@@ -707,6 +876,17 @@ fn find_rust_files(root: &Path, exclude: &[String]) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Formats check results into a human-readable report string.
+///
+/// # Arguments
+///
+/// * `results` - The check results from all files.
+/// * `base` - Base path for displaying relative paths.
+/// * `verbose` - Whether to show files without issues.
+///
+/// # Returns
+///
+/// A formatted report string ready for printing.
 fn format_results(results: &[FileResult], base: &Path, verbose: bool) -> String {
     let mut lines = Vec::new();
     let mut total_issues = 0;
@@ -763,6 +943,15 @@ fn format_results(results: &[FileResult], base: &Path, verbose: bool) -> String 
     lines.join("\n")
 }
 
+/// Entry point: parses args, finds files, checks documentation, and reports results.
+///
+/// # Returns
+///
+/// `Ok(())` on success.
+///
+/// # Errors
+///
+/// Returns an error if argument parsing or file operations fail.
 fn main() -> Result<()> {
     let args = Args::parse()?;
 
