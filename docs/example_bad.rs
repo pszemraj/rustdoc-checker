@@ -84,3 +84,46 @@ pub struct UndocumentedStruct {
 pub struct DocumentedStruct {
     pub field: i32,
 }
+
+/// Divides two numbers.
+// ISSUE: missing_panics - can panic on division by zero but no # Panics section
+pub fn divide(a: i32, b: i32) -> i32 {
+    a / b
+}
+
+/// Gets an element from a slice.
+// ISSUE: missing_panics - uses array indexing which can panic
+pub fn get_element(items: &[i32], idx: usize) -> i32 {
+    items[idx]
+}
+
+/// Unwraps an optional value.
+// ISSUE: missing_panics - uses .unwrap() which can panic
+pub fn must_have_value(opt: Option<i32>) -> i32 {
+    opt.unwrap()
+}
+
+/// Asserts a condition before computing.
+// ISSUE: missing_panics - uses assert! which can panic
+pub fn compute_with_assert(x: i32) -> i32 {
+    assert!(x > 0);
+    x * 2
+}
+
+/// Well-documented function that can panic - no issues.
+///
+/// # Panics
+///
+/// Panics if `b` is zero.
+pub fn well_documented_divide(a: i32, b: i32) -> i32 {
+    a / b
+}
+
+/// Well-documented function with unwrap - no issues.
+///
+/// # Panics
+///
+/// Panics if the option is `None`.
+pub fn well_documented_unwrap(opt: Option<i32>) -> i32 {
+    opt.unwrap()
+}

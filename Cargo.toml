@@ -6,7 +6,7 @@ description = "Check Rust files for missing/lazy documentation"
 
 [dependencies]
 syn = { version = "2", features = ["full", "parsing", "visit"] }
-proc-macro2 = "1"
+proc-macro2 = { version = "1", features = ["span-locations"] }
 walkdir = "2"
 anyhow = "1"
 

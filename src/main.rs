@@ -9,7 +9,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use syn::visit::Visit;
 use syn::{
-    Attribute, FnArg, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStatic,
+    Attribute, Block, FnArg, ItemConst, ItemEnum, ItemFn, ItemImpl, ItemMod, ItemStatic,
     ItemStruct, ItemTrait, ItemType, Pat, ReturnType, Signature, TraitItem, Type, Visibility,
 };
 use walkdir::WalkDir;
@@ -44,7 +44,7 @@ struct Args {
 impl Args {
     fn parse() -> Result<Self> {
         let mut args = env::args().skip(1).peekable();
-        
+
         let mut path: Option<PathBuf> = None;
         let mut mode = CheckMode::Both;
         let mut verbose = false;
@@ -62,7 +62,9 @@ impl Args {
                 "--strict" => strict = true,
                 "--check-private" => check_private = true,
                 "-m" | "--mode" => {
-                    let val = args.next().ok_or_else(|| anyhow::anyhow!("--mode requires a value"))?;
+                    let val = args
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("--mode requires a value"))?;
                     mode = match val.as_str() {
                         "docs" => CheckMode::Docs,
                         "lazy" => CheckMode::Lazy,
@@ -71,7 +73,9 @@ impl Args {
                     };
                 }
                 "--exclude" => {
-                    let val = args.next().ok_or_else(|| anyhow::anyhow!("--exclude requires a value"))?;
+                    let val = args
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("--exclude requires a value"))?;
                     exclude = val.split(',').map(|s| s.trim().to_string()).collect();
                 }
                 s if s.starts_with('-') => bail!("Unknown option: {}", s),
@@ -84,7 +88,8 @@ impl Args {
             }
         }
 
-        let path = path.ok_or_else(|| anyhow::anyhow!("Missing required argument: <PATH>\n\n{}", USAGE))?;
+        let path =
+            path.ok_or_else(|| anyhow::anyhow!("Missing required argument: <PATH>\n\n{}", USAGE))?;
 
         Ok(Self {
             path,
@@ -144,7 +149,6 @@ struct FileResult {
 /// Parsed documentation sections.
 #[derive(Debug, Default)]
 struct DocSections {
-    raw: String,
     has_arguments: bool,
     has_returns: bool,
     has_errors: bool,
@@ -156,19 +160,81 @@ impl DocSections {
     fn parse(doc: &str) -> Self {
         let lower = doc.to_lowercase();
         Self {
-            raw: doc.to_string(),
             // Check for common section headers (# Arguments, # Parameters, ## Args, etc.)
             has_arguments: lower.contains("# argument")
                 || lower.contains("# parameter")
                 || lower.contains("# args")
                 || lower.contains("# params"),
-            has_returns: lower.contains("# return")
-                || lower.contains("# yield"),
+            has_returns: lower.contains("# return") || lower.contains("# yield"),
             has_errors: lower.contains("# error"),
             has_panics: lower.contains("# panic"),
             has_safety: lower.contains("# safety"),
         }
     }
+}
+
+/// Visitor to detect panic-prone patterns in function bodies.
+struct PanicDetector {
+    found_panic: bool,
+}
+
+impl PanicDetector {
+    fn new() -> Self {
+        Self { found_panic: false }
+    }
+}
+
+impl<'ast> Visit<'ast> for PanicDetector {
+    fn visit_macro(&mut self, node: &'ast syn::Macro) {
+        if let Some(ident) = node.path.get_ident() {
+            let name = ident.to_string();
+            if matches!(
+                name.as_str(),
+                "panic"
+                    | "unreachable"
+                    | "todo"
+                    | "unimplemented"
+                    | "assert"
+                    | "assert_eq"
+                    | "assert_ne"
+                    | "debug_assert"
+                    | "debug_assert_eq"
+                    | "debug_assert_ne"
+            ) {
+                self.found_panic = true;
+            }
+        }
+        syn::visit::visit_macro(self, node);
+    }
+
+    fn visit_expr_method_call(&mut self, node: &'ast syn::ExprMethodCall) {
+        let method = node.method.to_string();
+        if matches!(method.as_str(), "unwrap" | "expect") {
+            self.found_panic = true;
+        }
+        syn::visit::visit_expr_method_call(self, node);
+    }
+
+    fn visit_expr_index(&mut self, node: &'ast syn::ExprIndex) {
+        // Array/slice indexing can panic on out-of-bounds
+        self.found_panic = true;
+        syn::visit::visit_expr_index(self, node);
+    }
+
+    fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
+        // Integer division and modulo can panic on division by zero
+        if matches!(node.op, syn::BinOp::Div(_) | syn::BinOp::Rem(_)) {
+            self.found_panic = true;
+        }
+        syn::visit::visit_expr_binary(self, node);
+    }
+}
+
+/// Check if a function body contains panic-prone patterns.
+fn can_panic(body: &Block) -> bool {
+    let mut detector = PanicDetector::new();
+    detector.visit_block(body);
+    detector.found_panic
 }
 
 /// Extract doc comment from attributes.
@@ -305,7 +371,13 @@ impl DocChecker {
         });
     }
 
-    fn check_function(&mut self, sig: &Signature, attrs: &[Attribute], vis: Option<&Visibility>) {
+    fn check_function(
+        &mut self,
+        sig: &Signature,
+        attrs: &[Attribute],
+        vis: Option<&Visibility>,
+        body: Option<&Block>,
+    ) {
         let name = self.qualified_name(&sig.ident.to_string());
         let line = sig.ident.span().start().line;
 
@@ -342,7 +414,11 @@ impl DocChecker {
                         name.clone(),
                         line,
                         IssueType::MissingArguments,
-                        format!("Has {} params ({}) but no # Arguments section", param_count, params.join(", ")),
+                        format!(
+                            "Has {} params ({}) but no # Arguments section",
+                            param_count,
+                            params.join(", ")
+                        ),
                     );
                 }
 
@@ -375,11 +451,30 @@ impl DocChecker {
                         "Unsafe function but no # Safety section".to_string(),
                     );
                 }
+
+                // Check Panics section (if function can panic)
+                if let Some(block) = body {
+                    if can_panic(block) && !sections.has_panics {
+                        self.add_issue(
+                            name.clone(),
+                            line,
+                            IssueType::MissingPanics,
+                            "Function can panic but no # Panics section".to_string(),
+                        );
+                    }
+                }
             }
         }
     }
 
-    fn check_item_doc(&mut self, name: &str, attrs: &[Attribute], vis: &Visibility, line: usize, kind: &str) {
+    fn check_item_doc(
+        &mut self,
+        name: &str,
+        attrs: &[Attribute],
+        vis: &Visibility,
+        line: usize,
+        kind: &str,
+    ) {
         if !is_checkable(vis, self.check_private) {
             return;
         }
@@ -398,14 +493,20 @@ impl DocChecker {
 
 impl<'ast> Visit<'ast> for DocChecker {
     fn visit_item_fn(&mut self, node: &'ast ItemFn) {
-        self.check_function(&node.sig, &node.attrs, Some(&node.vis));
+        self.check_function(&node.sig, &node.attrs, Some(&node.vis), Some(&node.block));
         syn::visit::visit_item_fn(self, node);
     }
 
     fn visit_item_struct(&mut self, node: &'ast ItemStruct) {
         let line = node.ident.span().start().line;
-        self.check_item_doc(&node.ident.to_string(), &node.attrs, &node.vis, line, "struct");
-        
+        self.check_item_doc(
+            &node.ident.to_string(),
+            &node.attrs,
+            &node.vis,
+            line,
+            "struct",
+        );
+
         self.context_stack.push(node.ident.to_string());
         syn::visit::visit_item_struct(self, node);
         self.context_stack.pop();
@@ -413,8 +514,14 @@ impl<'ast> Visit<'ast> for DocChecker {
 
     fn visit_item_enum(&mut self, node: &'ast ItemEnum) {
         let line = node.ident.span().start().line;
-        self.check_item_doc(&node.ident.to_string(), &node.attrs, &node.vis, line, "enum");
-        
+        self.check_item_doc(
+            &node.ident.to_string(),
+            &node.attrs,
+            &node.vis,
+            line,
+            "enum",
+        );
+
         self.context_stack.push(node.ident.to_string());
         syn::visit::visit_item_enum(self, node);
         self.context_stack.pop();
@@ -422,8 +529,14 @@ impl<'ast> Visit<'ast> for DocChecker {
 
     fn visit_item_trait(&mut self, node: &'ast ItemTrait) {
         let line = node.ident.span().start().line;
-        self.check_item_doc(&node.ident.to_string(), &node.attrs, &node.vis, line, "trait");
-        
+        self.check_item_doc(
+            &node.ident.to_string(),
+            &node.attrs,
+            &node.vis,
+            line,
+            "trait",
+        );
+
         self.context_stack.push(node.ident.to_string());
         syn::visit::visit_item_trait(self, node);
         self.context_stack.pop();
@@ -432,7 +545,8 @@ impl<'ast> Visit<'ast> for DocChecker {
     fn visit_trait_item(&mut self, node: &'ast TraitItem) {
         if let TraitItem::Fn(method) = node {
             // Trait methods are implicitly public if trait is public
-            self.check_function(&method.sig, &method.attrs, None);
+            // For default implementations, pass the body for panic detection
+            self.check_function(&method.sig, &method.attrs, None, method.default.as_ref());
         }
         syn::visit::visit_trait_item(self, node);
     }
@@ -466,14 +580,20 @@ impl<'ast> Visit<'ast> for DocChecker {
     }
 
     fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
-        self.check_function(&node.sig, &node.attrs, Some(&node.vis));
+        self.check_function(&node.sig, &node.attrs, Some(&node.vis), Some(&node.block));
         syn::visit::visit_impl_item_fn(self, node);
     }
 
     fn visit_item_mod(&mut self, node: &'ast ItemMod) {
         let line = node.ident.span().start().line;
-        self.check_item_doc(&node.ident.to_string(), &node.attrs, &node.vis, line, "module");
-        
+        self.check_item_doc(
+            &node.ident.to_string(),
+            &node.attrs,
+            &node.vis,
+            line,
+            "module",
+        );
+
         self.context_stack.push(node.ident.to_string());
         syn::visit::visit_item_mod(self, node);
         self.context_stack.pop();
@@ -481,26 +601,44 @@ impl<'ast> Visit<'ast> for DocChecker {
 
     fn visit_item_type(&mut self, node: &'ast ItemType) {
         let line = node.ident.span().start().line;
-        self.check_item_doc(&node.ident.to_string(), &node.attrs, &node.vis, line, "type alias");
+        self.check_item_doc(
+            &node.ident.to_string(),
+            &node.attrs,
+            &node.vis,
+            line,
+            "type alias",
+        );
         syn::visit::visit_item_type(self, node);
     }
 
     fn visit_item_const(&mut self, node: &'ast ItemConst) {
         let line = node.ident.span().start().line;
-        self.check_item_doc(&node.ident.to_string(), &node.attrs, &node.vis, line, "const");
+        self.check_item_doc(
+            &node.ident.to_string(),
+            &node.attrs,
+            &node.vis,
+            line,
+            "const",
+        );
         syn::visit::visit_item_const(self, node);
     }
 
     fn visit_item_static(&mut self, node: &'ast ItemStatic) {
         let line = node.ident.span().start().line;
-        self.check_item_doc(&node.ident.to_string(), &node.attrs, &node.vis, line, "static");
+        self.check_item_doc(
+            &node.ident.to_string(),
+            &node.attrs,
+            &node.vis,
+            line,
+            "static",
+        );
         syn::visit::visit_item_static(self, node);
     }
 }
 
 fn check_file(path: &Path, mode: CheckMode, check_private: bool) -> Result<FileResult> {
-    let content = fs::read_to_string(path)
-        .with_context(|| format!("Failed to read {}", path.display()))?;
+    let content =
+        fs::read_to_string(path).with_context(|| format!("Failed to read {}", path.display()))?;
 
     let mut result = FileResult {
         filepath: path.to_path_buf(),
@@ -543,12 +681,10 @@ fn check_file(path: &Path, mode: CheckMode, check_private: bool) -> Result<FileR
 }
 
 fn find_rust_files(root: &Path, exclude: &[String]) -> Vec<PathBuf> {
-    let skip_dirs: std::collections::HashSet<&str> = [
-        "target", ".git", "node_modules", ".cargo",
-    ]
-    .into_iter()
-    .chain(exclude.iter().map(|s| s.as_str()))
-    .collect();
+    let skip_dirs: std::collections::HashSet<&str> = ["target", ".git", "node_modules", ".cargo"]
+        .into_iter()
+        .chain(exclude.iter().map(|s| s.as_str()))
+        .collect();
 
     if root.is_file() {
         return if root.extension().is_some_and(|e| e == "rs") {
@@ -630,7 +766,9 @@ fn format_results(results: &[FileResult], base: &Path, verbose: bool) -> String 
 fn main() -> Result<()> {
     let args = Args::parse()?;
 
-    let target = args.path.canonicalize()
+    let target = args
+        .path
+        .canonicalize()
         .with_context(|| format!("Path does not exist: {}", args.path.display()))?;
 
     let files = find_rust_files(&target, &args.exclude);

@@ -9,6 +9,23 @@ cargo build --release
 # Binary at: target/release/rustdoc-checker
 ```
 
+## Installation
+
+```bash
+# Install to ~/.cargo/bin (must be in PATH)
+cargo install --path .
+
+# Verify installation
+rustdoc-checker --help
+```
+
+If `~/.cargo/bin` is not in your PATH, add it:
+
+```bash
+# Add to ~/.bashrc or ~/.zshrc
+export PATH="$HOME/.cargo/bin:$PATH"
+```
+
 ## Usage
 
 ```bash
@@ -48,6 +65,7 @@ rustdoc-checker ./src -v
 - `# Returns` section required if function returns non-unit
 - `# Errors` section required if function returns `Result`
 - `# Safety` section required for `unsafe fn`
+- `# Panics` section required if function can panic (uses `panic!`, `unwrap()`, `expect()`, `assert!`, array indexing, division, etc.)
 
 ## Output Format
 
