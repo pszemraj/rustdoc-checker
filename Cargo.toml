@@ -3,6 +3,7 @@ name = "rustdoc-checker"
 version = "0.1.0"
 edition = "2021"
 description = "Check Rust files for missing/lazy documentation"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 syn = { version = "2", features = ["full", "parsing", "visit"] }
