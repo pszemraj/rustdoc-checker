@@ -1,6 +1,15 @@
 [package]
 name = "rustdoc-checker"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+description = "Check Rust files for missing/lazy documentation"
 
 [dependencies]
+syn = { version = "2", features = ["full", "parsing", "visit"] }
+proc-macro2 = "1"
+walkdir = "2"
+anyhow = "1"
+
+[profile.release]
+lto = true
+strip = true
