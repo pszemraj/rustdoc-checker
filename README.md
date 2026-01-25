@@ -12,7 +12,11 @@ cargo build --release
 ## Installation
 
 ```bash
-# Install to ~/.cargo/bin (must be in PATH)
+# Clone the repository
+git clone https://github.com/pszemraj/rustdoc-checker.git
+cd rustdoc-checker
+
+# Install to ~/.cargo/bin
 cargo install --path .
 
 # Verify installation
@@ -97,7 +101,7 @@ Breakdown by type:
 # GitHub Actions example
 - name: Check documentation
   run: |
-    cargo install --path ./rustdoc-checker
+    cargo install --git https://github.com/pszemraj/rustdoc-checker.git
     rustdoc-checker ./src --strict
 ```
 

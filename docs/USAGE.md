@@ -127,7 +127,7 @@ jobs:
         uses: dtolnay/rust-action@stable
 
       - name: Install rustdoc-checker
-        run: cargo install --path ./rustdoc-checker
+        run: cargo install --git https://github.com/pszemraj/rustdoc-checker.git
 
       - name: Check documentation
         run: rustdoc-checker ./src --strict
