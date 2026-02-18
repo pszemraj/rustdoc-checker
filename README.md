@@ -62,7 +62,7 @@ rustdoc-checker ./src -v
 
 **Missing docs (`--mode docs`):**
 - Module-level `//!` comments
-- Public functions, structs, enums, traits, type aliases, consts, statics
+- Non-private functions, structs, enums, traits, type aliases, consts, statics (`pub`, `pub(crate)`, `pub(super)`, `pub(in path)`)
 
 **Lazy docs (`--mode lazy`):**
 - `# Arguments` section required if function has 2+ parameters
