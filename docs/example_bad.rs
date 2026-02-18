@@ -127,3 +127,30 @@ pub fn well_documented_divide(a: i32, b: i32) -> i32 {
 pub fn well_documented_unwrap(opt: Option<i32>) -> i32 {
     opt.unwrap()
 }
+
+// --- Visibility edge cases ---
+
+// ISSUE: missing_doc - pub(crate) should be checked in default mode
+pub(crate) fn crate_visible_undocumented() -> bool {
+    true
+}
+
+// ISSUE: missing_doc - pub(super) should be checked in default mode
+pub(super) fn super_visible_undocumented() -> bool {
+    true
+}
+
+// NO ISSUE: pub(self) is effectively private, skipped in default mode
+pub(self) fn self_visible_function() -> bool {
+    true
+}
+
+// NO ISSUE: truly private (no pub keyword), skipped in default mode
+fn private_function() -> bool {
+    true
+}
+
+/// Documented pub(crate) function - no issues.
+pub(crate) fn crate_visible_documented() -> bool {
+    true
+}

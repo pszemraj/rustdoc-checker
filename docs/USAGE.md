@@ -26,7 +26,7 @@ OPTIONS:
 Checks for completely missing documentation:
 
 - Module-level `//!` comments
-- Public functions, structs, enums, traits
+- Non-private functions, structs, enums, traits (`pub`, `pub(crate)`, `pub(super)`, `pub(in path)`)
 - Type aliases, constants, statics
 
 ```bash
@@ -78,10 +78,10 @@ The lazy docs checker detects functions that can panic and flags them if they la
 
 ## Visibility Filtering
 
-By default, only `pub` items are checked. Use `--check-private` to include private items:
+By default, all non-private items are checked — this includes `pub`, `pub(crate)`, `pub(super)`, and `pub(in path)`. Only truly private items (no `pub` keyword, i.e. `Visibility::Inherited`) and `pub(self)` are skipped. Use `--check-private` to check everything:
 
 ```bash
-# Public items only (default)
+# Non-private items only (default)
 rustdoc-checker ./src
 
 # Include private items
