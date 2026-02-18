@@ -1,6 +1,6 @@
 [package]
 name = "rustdoc-checker"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = "Check Rust files for missing/lazy documentation"
 license = "MIT OR Apache-2.0"
