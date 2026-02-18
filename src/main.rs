@@ -135,6 +135,7 @@ struct Issue {
 
 /// Categories of documentation issues.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(clippy::enum_variant_names)]
 enum IssueType {
     /// Item has no documentation at all.
     MissingDoc,
@@ -822,15 +823,13 @@ fn check_file(path: &Path, mode: CheckMode, check_private: bool) -> Result<FileR
     };
 
     // Check module-level doc
-    if matches!(mode, CheckMode::Docs | CheckMode::Both) {
-        if extract_doc(&file.attrs).is_none() {
-            result.issues.push(Issue {
-                name: "<module>".to_string(),
-                line: 1,
-                issue_type: IssueType::MissingDoc,
-                detail: "Missing module-level documentation (//! comment)".to_string(),
-            });
-        }
+    if matches!(mode, CheckMode::Docs | CheckMode::Both) && extract_doc(&file.attrs).is_none() {
+        result.issues.push(Issue {
+            name: "<module>".to_string(),
+            line: 1,
+            issue_type: IssueType::MissingDoc,
+            detail: "Missing module-level documentation (//! comment)".to_string(),
+        });
     }
 
     let mut checker = DocChecker::new(mode, check_private);
