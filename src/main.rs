@@ -327,7 +327,11 @@ fn is_checkable(vis: &Visibility, check_private: bool) -> bool {
     if check_private {
         return true;
     }
-    !matches!(vis, Visibility::Inherited)
+    match vis {
+        Visibility::Inherited => false,
+        Visibility::Restricted(r) => !r.path.is_ident("self"),
+        _ => true,
+    }
 }
 
 /// Counts real parameters (excluding `self`).
